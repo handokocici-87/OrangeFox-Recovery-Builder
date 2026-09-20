@@ -8,15 +8,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Device Tree
-        uses: actions/checkout@v4
-        with:
-          ref: twrp_15
 
       - name: Setup Build Environment
         run: |
           sudo apt-get update
-
           sudo apt-get install -y \
             git-core \
             gnupg \
@@ -71,7 +66,6 @@ jobs:
 
           git clone \
             https://github.com/handokocici-87/android_device_xiaomi_zircon_twrp.git \
-            -b twrp_15 \
             device/xiaomi/zircon
 
       - name: Sync Sources
@@ -101,5 +95,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: OrangeFox-zircon-unofficial
-          path: |
-            fox/out/target/product/zircon/recovery.img
+          path: fox/out/target/product/zircon/recovery.img
