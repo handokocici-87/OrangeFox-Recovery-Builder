@@ -10,7 +10,7 @@ jobs:
     - name: Checkout Device Tree
       uses: actions/checkout@v4
       with:
-        ref: twrp_15
+        ref: main
       
     - name: Setup Build Environment
       run: |
