@@ -10,7 +10,7 @@ jobs:
     - name: Checkout Device Tree
       uses: actions/checkout@v4
       with:
-        ref: a16 # Mengambil device tree dari branch a16
+        ref: twrp_15
       
     - name: Setup Build Environment
       run: |
@@ -20,9 +20,9 @@ jobs:
     - name: Initialize OrangeFox Source
       run: |
         mkdir fox && cd fox
-        # Menggunakan branch fox_14.1 sebagai base terdekat untuk A15
         repo init -u https://gitlab.com/OrangeFox/sync.git -b fox_14.1 --depth=1
-        echo '<project path="device/xiaomi/zircon" name="YOUR_GITHUB_USERNAME/android_device_xiaomi_zircon_twrp" remote="github" revision="a16" />' >> .repo/local_manifests/roomservice.xml
+        # Username sudah diisi otomatis: handokocici-87
+        echo '<project path="device/xiaomi/zircon" name="handokocici-87/android_device_xiaomi_zircon_twrp" remote="github" revision="twrp_15" />' >> .repo/local_manifests/roomservice.xml
         
     - name: Sync Sources
       run: |
@@ -33,7 +33,8 @@ jobs:
       run: |
         cd fox
         source build/envsetup.sh
-        lunch omni_zircon-eng
+        # PERBAIKAN KUNCI: Menggunakan prefix 'twrp_' sesuai device tree asli
+        lunch twrp_zircon-eng
         mka adbd recoveryimage
         
     - name: Upload Artifact
