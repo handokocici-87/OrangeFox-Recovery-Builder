@@ -20,8 +20,8 @@ jobs:
     - name: Initialize OrangeFox Source
       run: |
         mkdir fox && cd fox
-        # PERBAIKAN: Menggunakan branch 'fox_r11' yang valid untuk OFRP
-        repo init -u https://gitlab.com/OrangeFox/sync.git -b fox_r11 --depth=1
+        # PERBAIKAN: Menggunakan branch 'main' yang pasti tersedia
+        repo init -u https://gitlab.com/OrangeFox/sync.git -b main --depth=1
         echo '<project path="device/xiaomi/zircon" name="handokocici-87/android_device_xiaomi_zircon_twrp" remote="github" revision="twrp_15" />' >> .repo/local_manifests/roomservice.xml
         
     - name: Sync Sources
@@ -41,3 +41,4 @@ jobs:
       with:
         name: OrangeFox-zircon-unofficial
         path: fox/out/target/product/zircon/recovery.img
+        
