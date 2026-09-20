@@ -10,19 +10,18 @@ jobs:
     - name: Checkout Device Tree
       uses: actions/checkout@v4
       with:
-        ref: main # Menggunakan branch 'main' dari repo builder
+        ref: main
       
     - name: Setup Build Environment
       run: |
         sudo apt-get update
-        # Paket kompatibel untuk Ubuntu 24.04
         sudo apt-get install -y git-core gnupg flex bison gperf build-essential zip curl zlib1g-dev gcc-multilib g++-multilib libc6-dev-i386 libncurses5-dev lib32ncurses6 x11proto-core-dev libx11-dev lib32z-dev ccache libgl1-mesa-dev libxml2-utils xsltproc unzip python3 repo
         
     - name: Initialize OrangeFox Source
       run: |
         mkdir fox && cd fox
-        # PERBAIKAN: Mengganti fox_14.1 dengan fox_12.1 (branch valid untuk OFRP)
-        repo init -u https://gitlab.com/OrangeFox/sync.git -b fox_12.1 --depth=1
+        # PERBAIKAN: Menggunakan branch 'fox_r12' yang valid untuk OFRP
+        repo init -u https://gitlab.com/OrangeFox/sync.git -b fox_r12 --depth=1
         echo '<project path="device/xiaomi/zircon" name="handokocici-87/android_device_xiaomi_zircon_twrp" remote="github" revision="twrp_15" />' >> .repo/local_manifests/roomservice.xml
         
     - name: Sync Sources
