@@ -1,4 +1,4 @@
-name: Build OrangeFox for Zircon
+name: Build OrangeFox Zircon A15
 
 on:
   workflow_dispatch:
@@ -7,20 +7,56 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
+    env:
+      FOX_DIR: ${{ github.workspace }}/fox
+      DEVICE_REPO: https://github.com/handokocici-87/android_device_xiaomi_zircon_twrp.git
+      DEVICE_BRANCH: a15
+      ORANGEFOX_SYNC_REPO: https://gitlab.com/OrangeFox/sync.git
+      ORANGEFOX_BRANCH: 14.1
+
     steps:
 
+      # ============================================================
+      # 1. FREE DISK SPACE
+      # ============================================================
+      - name: Free Disk Space
+        run: |
+          echo "=== DISK BEFORE CLEANUP ==="
+          df -h /
+
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/share/powershell
+          sudo rm -rf /usr/local/share/chromium
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo rm -rf /opt/hostedtoolcache/node
+
+          sudo apt-get clean
+          sudo rm -rf /var/lib/apt/lists/*
+
+          echo "=== DISK AFTER CLEANUP ==="
+          df -h /
+
+      # ============================================================
+      # 2. INSTALL BUILD DEPENDENCIES
+      # ============================================================
       - name: Setup Build Environment
         run: |
           sudo apt-get update
+
           sudo apt-get install -y \
-            git-core \
+            git \
+            git-lfs \
             gnupg \
             flex \
             bison \
             gperf \
             build-essential \
             zip \
+            unzip \
             curl \
+            wget \
             zlib1g-dev \
             gcc-multilib \
             g++-multilib \
@@ -34,65 +70,266 @@ jobs:
             libgl1-mesa-dev \
             libxml2-utils \
             xsltproc \
-            unzip \
             python3 \
+            python3-pip \
             python-is-python3 \
             rsync \
             bc \
             lz4 \
-            cpio
+            cpio \
+            libssl-dev \
+            libelf-dev \
+            schedtool
 
-      - name: Initialize OrangeFox Source
+          git lfs install --system
+
+          echo "=== GIT VERSION ==="
+          git --version
+
+      # ============================================================
+      # 3. INSTALL OFFICIAL REPO TOOL
+      # ============================================================
+      - name: Install Repo Tool
         run: |
-          mkdir -p "$GITHUB_WORKSPACE/fox"
+          sudo curl -fsSL \
+            https://storage.googleapis.com/git-repo-downloads/repo \
+            -o /usr/local/bin/repo
 
-          git clone --depth=1 \
-            https://gitlab.com/OrangeFox/sync.git \
+          sudo chmod +x /usr/local/bin/repo
+
+          echo "=== REPO VERSION ==="
+          repo --version
+
+          echo "=== REPO LOCATION ==="
+          command -v repo
+
+      # ============================================================
+      # 4. GIT CONFIGURATION
+      # ============================================================
+      - name: Configure Git
+        run: |
+          git config --global user.name "OrangeFox Builder"
+          git config --global user.email "orangefox-builder@localhost"
+
+          git config --global protocol.version 1
+          git config --global core.compression 0
+          git config --global http.postBuffer 524288000
+
+      # ============================================================
+      # 5. VERIFY DEVICE TREE BRANCH BEFORE STARTING BUILD
+      # ============================================================
+      - name: Verify Zircon Device Tree
+        run: |
+          echo "Checking device tree..."
+
+          git ls-remote \
+            --heads \
+            "$DEVICE_REPO" \
+            "refs/heads/$DEVICE_BRANCH"
+
+          if [ $? -ne 0 ]; then
+            echo "ERROR: Device branch '$DEVICE_BRANCH' was not found."
+            exit 1
+          fi
+
+          echo "Device branch '$DEVICE_BRANCH' exists."
+
+      # ============================================================
+      # 6. VERIFY ORANGEFOX SYNC SOURCE
+      # ============================================================
+      - name: Verify OrangeFox Sync
+        run: |
+          rm -rf "$GITHUB_WORKSPACE/OrangeFox_sync"
+
+          git clone \
+            --depth=1 \
+            "$ORANGEFOX_SYNC_REPO" \
             "$GITHUB_WORKSPACE/OrangeFox_sync"
 
           cd "$GITHUB_WORKSPACE/OrangeFox_sync"
 
           chmod +x orangefox_sync.sh
 
-          ./orangefox_sync.sh \
-            --branch 14.1 \
-            --path "$GITHUB_WORKSPACE/fox"
+          echo "=== ORANGEFOX SYNC SCRIPT ==="
+          ./orangefox_sync.sh --help
 
+      # ============================================================
+      # 7. CHECK DISK BEFORE ORANGEFOX SYNC
+      # ============================================================
+      - name: Check Build Storage
+        run: |
+          echo "=== STORAGE STATUS ==="
+          df -h "$GITHUB_WORKSPACE"
+
+          AVAILABLE_GB=$(df -BG "$GITHUB_WORKSPACE" | awk 'NR==2 {gsub("G","",$4); print $4}')
+
+          echo "Available storage: ${AVAILABLE_GB} GB"
+
+          if [ "$AVAILABLE_GB" -lt 12 ]; then
+            echo ""
+            echo "ERROR: Not enough free storage for OrangeFox."
+            echo "Available: ${AVAILABLE_GB} GB"
+            echo "OrangeFox source sync normally needs substantially more storage."
+            echo ""
+            exit 1
+          fi
+
+      # ============================================================
+      # 8. INITIALIZE ORANGEFOX SOURCE
+      # ============================================================
+      - name: Initialize OrangeFox Source
+        run: |
+          rm -rf "$FOX_DIR"
+          mkdir -p "$FOX_DIR"
+
+          cd "$GITHUB_WORKSPACE/OrangeFox_sync"
+
+          ./orangefox_sync.sh \
+            --branch "$ORANGEFOX_BRANCH" \
+            --path "$FOX_DIR"
+
+      # ============================================================
+      # 9. ADD ZIRCON DEVICE TREE
+      # ============================================================
       - name: Add Zircon Device Tree
         run: |
-          cd "$GITHUB_WORKSPACE/fox"
+          mkdir -p "$FOX_DIR/device/xiaomi"
 
-          mkdir -p device/xiaomi
+          rm -rf "$FOX_DIR/device/xiaomi/zircon"
 
           git clone \
-            https://github.com/handokocici-87/android_device_xiaomi_zircon_twrp.git \
-            device/xiaomi/zircon
+            --depth=1 \
+            --branch "$DEVICE_BRANCH" \
+            "$DEVICE_REPO" \
+            "$FOX_DIR/device/xiaomi/zircon"
 
-      - name: Sync Sources
+          echo "=== DEVICE TREE ==="
+          ls -la "$FOX_DIR/device/xiaomi/zircon"
+
+      # ============================================================
+      # 10. VERIFY REQUIRED ZIRCON FILES
+      # ============================================================
+      - name: Verify Zircon Build Files
         run: |
-          cd "$GITHUB_WORKSPACE/fox"
+          cd "$FOX_DIR"
 
-          repo sync \
-            -c \
-            -j$(nproc --all) \
-            --no-tags \
-            --no-clone-bundle \
-            --optimized-fetch \
-            --prune \
-            --force-sync
+          REQUIRED_FILES=(
+            "device/xiaomi/zircon/AndroidProducts.mk"
+            "device/xiaomi/zircon/BoardConfig.mk"
+            "device/xiaomi/zircon/device.mk"
+            "device/xiaomi/zircon/twrp_zircon.mk"
+            "device/xiaomi/zircon/fox_zircon.mk"
+          )
 
-      - name: Build OrangeFox
+          for FILE in "${REQUIRED_FILES[@]}"; do
+            if [ ! -f "$FILE" ]; then
+              echo "ERROR: Missing required file:"
+              echo "$FILE"
+              exit 1
+            fi
+
+            echo "OK: $FILE"
+          done
+
+      # ============================================================
+      # 11. SHOW TARGET INFORMATION
+      # ============================================================
+      - name: Show Build Configuration
         run: |
-          cd "$GITHUB_WORKSPACE/fox"
+          cd "$FOX_DIR"
+
+          echo "======================================"
+          echo "OrangeFox Zircon Build"
+          echo "======================================"
+
+          echo "Device:"
+          echo "  Xiaomi Redmi Note 13 Pro+"
+          echo "  Codename: zircon"
+
+          echo "Device tree:"
+          echo "  Branch: $DEVICE_BRANCH"
+
+          echo "OrangeFox:"
+          echo "  Manifest: $ORANGEFOX_BRANCH"
+
+          echo "Build target:"
+          echo "  twrp_zircon-eng"
+
+          echo "Image:"
+          echo "  vendor_boot.img"
+
+          echo "======================================"
+
+          grep -n "FOX_RECOVERY_VENDOR_BOOT_PARTITION" \
+            device/xiaomi/zircon/fox_zircon.mk || true
+
+      # ============================================================
+      # 12. BUILD ORANGEFOX
+      # ============================================================
+      - name: Build OrangeFox Vendor Boot
+        run: |
+          cd "$FOX_DIR"
+
+          export ALLOW_MISSING_DEPENDENCIES=true
 
           source build/envsetup.sh
 
-          lunch omni_zircon-eng
+          lunch twrp_zircon-eng
 
-          mka adbd recoveryimage
+          echo "=== LUNCH TARGET ==="
+          get_build_var TARGET_PRODUCT || true
 
-      - name: Upload Artifact
+          echo "=== STARTING VENDOR BOOT BUILD ==="
+
+          mka vendorbootimage -j2
+
+      # ============================================================
+      # 13. VERIFY RESULT
+      # ============================================================
+      - name: Verify Build Result
+        run: |
+          IMAGE="$FOX_DIR/out/target/product/zircon/vendor_boot.img"
+
+          if [ ! -f "$IMAGE" ]; then
+            echo "ERROR: vendor_boot.img was not generated."
+            echo ""
+            echo "Available output:"
+            find "$FOX_DIR/out/target/product/zircon" \
+              -maxdepth 1 \
+              -type f \
+              -printf "%f\n" 2>/dev/null || true
+            exit 1
+          fi
+
+          echo "======================================"
+          echo "BUILD SUCCESS"
+          echo "======================================"
+
+          ls -lh "$IMAGE"
+
+          file "$IMAGE"
+
+      # ============================================================
+      # 14. UPLOAD VENDOR_BOOT
+      # ============================================================
+      - name: Upload OrangeFox Vendor Boot
         uses: actions/upload-artifact@v4
         with:
-          name: OrangeFox-zircon-unofficial
-          path: fox/out/target/product/zircon/recovery.img
+          name: OrangeFox-zircon-A15-vendor_boot
+          path: fox/out/target/product/zircon/vendor_boot.img
+          if-no-files-found: error
+          retention-days: 7
+
+      # ============================================================
+      # 15. UPLOAD BUILD LOGS IF SOMETHING FAILS
+      # ============================================================
+      - name: Upload Build Logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: OrangeFox-zircon-build-logs
+          path: |
+            fox/out/target/product/zircon
+            fox/out
+          if-no-files-found: ignore
+          retention-days: 3
