@@ -1,44 +1,250 @@
-name: Build OrangeFox for Zircon (A15 Base)
+name: Build OrangeFox Zircon Vendor Boot (Original Fixed)
 
 on:
   workflow_dispatch:
 
+env:
+  FOX_DIR: ${{ github.workspace }}/fox
+  DEVICE_REPO: https://github.com/handokocici-87/android_device_xiaomi_zircon_twrp.git
+  DEVICE_BRANCH: a15
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 360
+
     steps:
-    - name: Checkout Device Tree
-      uses: actions/checkout@v4
-      with:
-        ref: twrp_15
-      
-    - name: Setup Build Environment
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y git-core gnupg flex bison gperf build-essential zip curl zlib1g-dev gcc-multilib g++-multilib libc6-dev-i386 lib32ncurses5-dev x11proto-core-dev libx11-dev lib32z-dev ccache libgl1-mesa-dev libxml2-utils xsltproc unzip python3 repo
-        
-    - name: Initialize OrangeFox Source
-      run: |
-        mkdir fox && cd fox
-        repo init -u https://gitlab.com/OrangeFox/sync.git -b fox_14.1 --depth=1
-        # Username sudah diisi otomatis: handokocici-87
-        echo '<project path="device/xiaomi/zircon" name="handokocici-87/android_device_xiaomi_zircon_twrp" remote="github" revision="twrp_15" />' >> .repo/local_manifests/roomservice.xml
-        
-    - name: Sync Sources
-      run: |
-        cd fox
-        repo sync -c -j$(nproc --all) --no-tags --no-clone-bundle --optimized-fetch --prune --force-sync
-        
-    - name: Build OrangeFox
-      run: |
-        cd fox
-        source build/envsetup.sh
-        # PERBAIKAN KUNCI: Menggunakan prefix 'twrp_' sesuai device tree asli
-        lunch twrp_zircon-eng
-        mka adbd recoveryimage
-        
-    - name: Upload Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: OrangeFox-zircon-unofficial
-        path: fox/out/target/product/zircon/recovery.img
+
+      # ============================================================
+      # 1. CHECKOUT
+      # ============================================================
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ============================================================
+      # 2. FREE DISK SPACE
+      # ============================================================
+      - name: Free Disk Space
+        shell: bash
+        run: |
+          set -eux
+          echo "===== DISK BEFORE ====="
+          df -h
+          sudo rm -rf /usr/local/lib/android/sdk/ndk || true
+          sudo rm -rf /usr/local/lib/android/sdk/cmake || true
+          sudo rm -rf /usr/share/dotnet || true
+          sudo rm -rf /usr/local/share/boost || true
+          sudo rm -rf /opt/ghc || true
+          sudo rm -rf /opt/hostedtoolcache/CodeQL || true
+          sudo apt-get clean || true
+          echo "===== DISK AFTER ====="
+          df -h
+
+      # ============================================================
+      # 3. INSTALL BUILD DEPENDENCIES
+      # ============================================================
+      - name: Install Dependencies
+        shell: bash
+        run: |
+          set -eux
+          sudo apt-get update
+          sudo apt-get install -y \
+            adb bc bison build-essential ccache curl flex g++-multilib gcc-multilib git gnupg gperf imagemagick lib32ncurses5-dev lib32readline-dev lib32z1-dev libelf-dev liblz4-tool libncurses5 libncurses5-dev libncursesw5-dev libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools unzip xsltproc zip zlib1g-dev
+
+      # ============================================================
+      # 4. INSTALL REPO TOOL
+      # ============================================================
+      - name: Install Repo Tool
+        shell: bash
+        run: |
+          set -eux
+          sudo curl -L https://storage.googleapis.com/git-repo-downloads/repo -o /usr/local/bin/repo
+          sudo chmod +x /usr/local/bin/repo
+          repo --version
+
+      # ============================================================
+      # 5. PREPARE FOX DIRECTORY
+      # ============================================================
+      - name: Prepare OrangeFox Directory
+        shell: bash
+        run: |
+          set -eux
+          rm -rf "$FOX_DIR"
+          mkdir -p "$FOX_DIR"
+          cd "$FOX_DIR"
+          echo "FOX_DIR=$FOX_DIR"
+
+      # ============================================================
+      # 6. INITIALIZE ORANGEFOX
+      # ============================================================
+      - name: Sync OrangeFox 12.1
+        shell: bash
+        run: |
+          set -eux
+          cd "$FOX_DIR"
+          git clone --depth=1 https://gitlab.com/OrangeFox/sync.git fox_sync
+          cd fox_sync
+          chmod +x orangefox_sync.sh
+          echo "===== START ORANGEFOX SYNC ====="
+          ./orangefox_sync.sh 12.1
+
+      # ============================================================
+      # 7. CHECK SOURCE TREE
+      # ============================================================
+      - name: Check Source Tree
+        shell: bash
+        run: |
+          set -eux
+          cd "$FOX_DIR"
+          echo "===== ROOT ====="
+          ls -la
+          echo "===== BUILD ENVSETUP ====="
+          test -f build/envsetup.sh
+          ls -lh build/envsetup.sh
+
+      # ============================================================
+      # 8. ADD ZIRCON DEVICE TREE
+      # ============================================================
+      - name: Add Zircon Device Tree
+        shell: bash
+        run: |
+          set -eux
+          cd "$FOX_DIR"
+          rm -rf device/xiaomi/zircon
+          mkdir -p device/xiaomi
+          git clone --depth=1 --branch "$DEVICE_BRANCH" "$DEVICE_REPO" device/xiaomi/zircon
+          echo "===== ZIRCON DEVICE TREE ====="
+          ls -la device/xiaomi/zircon
+
+      # ============================================================
+      # 9. VERIFY ZIRCON BUILD FILES
+      # ============================================================
+      - name: Verify Zircon Files
+        shell: bash
+        run: |
+          set -eux
+          cd "$FOX_DIR"
+          echo "===== REQUIRED FILES ====="
+          test -f device/xiaomi/zircon/AndroidProducts.mk
+          test -f device/xiaomi/zircon/BoardConfig.mk
+          test -f device/xiaomi/zircon/device.mk
+          test -f device/xiaomi/zircon/twrp_zircon.mk
+          test -f device/xiaomi/zircon/omni_zircon.mk
+          echo "All required zircon files exist."
+
+      # ============================================================
+      # 10. PREPARE BUILD ENVIRONMENT
+      # ============================================================
+      - name: Prepare Build Environment
+        shell: bash
+        run: |
+          set -e
+          cd "$FOX_DIR"
+          export ALLOW_MISSING_DEPENDENCIES=true
+          test -f build/envsetup.sh
+          echo "build/envsetup.sh: OK"
+          source build/envsetup.sh
+          if ! declare -F lunch >/dev/null 2>&1; then
+            echo "ERROR: lunch function was not loaded."
+            exit 1
+          fi
+          echo "lunch function: OK"
+
+      # ============================================================
+      # 11. SELECT ZIRCON TARGET (DIPERBAIKI)
+      # ============================================================
+      - name: Select Zircon Target
+        shell: bash
+        run: |
+          set -e
+          cd "$FOX_DIR"
+          export ALLOW_MISSING_DEPENDENCIES=true
+          source build/envsetup.sh || true
+          if ! declare -F lunch >/dev/null 2>&1; then
+            echo "ERROR: lunch function unavailable."
+            exit 1
+          fi
+          echo "===== SELECT ZIRCON TARGET ====="
+          # PERBAIKAN: Mengganti twrp_zircon-eng menjadi omni_zircon-eng
+          lunch omni_zircon-eng
+          echo "===== SELECTED TARGET ====="
+          echo "TARGET_PRODUCT=$(get_build_var TARGET_PRODUCT)"
+          echo "TARGET_DEVICE=$(get_build_var TARGET_DEVICE)"
+          echo "TARGET_BUILD_VARIANT=$(get_build_var TARGET_BUILD_VARIANT)"
+          # Menyimpan nama target ke file untuk digunakan di step selanjutnya
+          echo "omni_zircon-eng" > "$GITHUB_WORKSPACE/zircon_target.txt"
+
+      # ============================================================
+      # 12. BUILD VENDOR_BOOT (DIPERBAIKI)
+      # ============================================================
+      - name: Build Vendor Boot
+        shell: bash
+        run: |
+          set -e
+          cd "$FOX_DIR"
+          export ALLOW_MISSING_DEPENDENCIES=true
+          export USE_CCACHE=1
+          mkdir -p "$HOME/.ccache"
+          source build/envsetup.sh || true
+          if ! declare -F lunch >/dev/null 2>&1; then
+            echo "ERROR: lunch function unavailable."
+            exit 1
+          fi
+          TARGET="$(cat "$GITHUB_WORKSPACE/zircon_target.txt")"
+          echo "===== LUNCH ====="
+          echo "$TARGET"
+          # PERBAIKAN: Menggunakan variabel target yang sudah benar
+          lunch "$TARGET"
+          echo "===== BUILD VARIABLES ====="
+          echo "TARGET_PRODUCT=$(get_build_var TARGET_PRODUCT)"
+          echo "TARGET_DEVICE=$(get_build_var TARGET_DEVICE)"
+          echo "PRODUCT_OUT=$(get_build_var PRODUCT_OUT)"
+          echo "===== START VENDOR BOOT BUILD ====="
+          mka vendorbootimage -j2
+
+      # ============================================================
+      # 13. VERIFY OUTPUT
+      # ============================================================
+      - name: Verify Vendor Boot
+        shell: bash
+        run: |
+          set -e
+          cd "$FOX_DIR"
+          OUTPUT="$FOX_DIR/out/target/product/zircon/vendor_boot.img"
+          echo "===== EXPECTED OUTPUT ====="
+          echo "$OUTPUT"
+          if [ ! -f "$OUTPUT" ]; then
+            echo "ERROR: vendor_boot.img was NOT created."
+            find "$FOX_DIR/out/target/product/zircon" -maxdepth 2 -type f $ -name "*.img" -o -name "*.zip" $ -print 2>/dev/null || true
+            exit 1
+          fi
+          echo "===== BUILD SUCCESS ====="
+          ls -lh "$OUTPUT"
+          file "$OUTPUT"
+          sha256sum "$OUTPUT"
+
+      # ============================================================
+      # 14. COPY FINAL OUTPUT
+      # ============================================================
+      - name: Prepare Release Files
+        shell: bash
+        run: |
+          set -e
+          mkdir -p "$GITHUB_WORKSPACE/release"
+          cp "$FOX_DIR/out/target/product/zircon/vendor_boot.img" "$GITHUB_WORKSPACE/release/OrangeFox-zircon-vendor_boot.img"
+          sha256sum "$GITHUB_WORKSPACE/release/OrangeFox-zircon-vendor_boot.img" > "$GITHUB_WORKSPACE/release/SHA256SUMS.txt"
+          echo "===== RELEASE FILES ====="
+          ls -lh "$GITHUB_WORKSPACE/release"
+          cat "$GITHUB_WORKSPACE/release/SHA256SUMS.txt"
+
+      # ============================================================
+      # 15. UPLOAD ARTIFACT
+      # ============================================================
+      - name: Upload OrangeFox Vendor Boot
+        uses: actions/upload-artifact@v4
+        with:
+          name: OrangeFox-zircon-vendor-boot
+          path: |
+            release/OrangeFox-zircon-vendor_boot.img
+            release/SHA256SUMS.txt
+          if-no-files-found: error
