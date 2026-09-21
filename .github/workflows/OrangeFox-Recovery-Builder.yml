@@ -1,4 +1,4 @@
-name: Build OrangeFox Zircon A15
+name: Build OrangeFox Zircon
 
 on:
   workflow_dispatch:
@@ -9,19 +9,22 @@ jobs:
 
     env:
       FOX_DIR: ${{ github.workspace }}/fox
+      SYNC_DIR: ${{ github.workspace }}/OrangeFox_sync
       DEVICE_REPO: https://github.com/handokocici-87/android_device_xiaomi_zircon_twrp.git
       DEVICE_BRANCH: a15
-      ORANGEFOX_SYNC_REPO: https://gitlab.com/OrangeFox/sync.git
-      ORANGEFOX_BRANCH: 14.1
+      FOX_BRANCH: 12.1
 
     steps:
 
       # ============================================================
-      # 1. FREE DISK SPACE
+      # 1. CLEAN RUNNER
       # ============================================================
-      - name: Free Disk Space
+      - name: Free Runner Disk
+        shell: bash
         run: |
-          echo "=== DISK BEFORE CLEANUP ==="
+          set -e
+
+          echo "===== BEFORE CLEANUP ====="
           df -h /
 
           sudo rm -rf /usr/local/lib/android
@@ -31,18 +34,24 @@ jobs:
           sudo rm -rf /opt/ghc
           sudo rm -rf /opt/hostedtoolcache/CodeQL
           sudo rm -rf /opt/hostedtoolcache/node
+          sudo rm -rf /usr/local/share/vcpkg
+          sudo rm -rf /usr/local/julia
+          sudo rm -rf /usr/local/aws-cli
 
           sudo apt-get clean
           sudo rm -rf /var/lib/apt/lists/*
 
-          echo "=== DISK AFTER CLEANUP ==="
+          echo "===== AFTER CLEANUP ====="
           df -h /
 
       # ============================================================
-      # 2. INSTALL BUILD DEPENDENCIES
+      # 2. INSTALL DEPENDENCIES
       # ============================================================
       - name: Setup Build Environment
+        shell: bash
         run: |
+          set -e
+
           sudo apt-get update
 
           sudo apt-get install -y \
@@ -71,7 +80,6 @@ jobs:
             libxml2-utils \
             xsltproc \
             python3 \
-            python3-pip \
             python-is-python3 \
             rsync \
             bc \
@@ -83,116 +91,132 @@ jobs:
 
           git lfs install --system
 
-          echo "=== GIT VERSION ==="
+          echo "===== GIT ====="
           git --version
 
       # ============================================================
-      # 3. INSTALL OFFICIAL REPO TOOL
+      # 3. INSTALL REPO
       # ============================================================
-      - name: Install Repo Tool
+      - name: Install Repo
+        shell: bash
         run: |
+          set -e
+
           sudo curl -fsSL \
             https://storage.googleapis.com/git-repo-downloads/repo \
             -o /usr/local/bin/repo
 
           sudo chmod +x /usr/local/bin/repo
 
-          echo "=== REPO VERSION ==="
+          echo "===== REPO ====="
+          command -v repo
           repo --version
 
-          echo "=== REPO LOCATION ==="
-          command -v repo
-
       # ============================================================
-      # 4. GIT CONFIGURATION
+      # 4. GIT CONFIG
       # ============================================================
       - name: Configure Git
+        shell: bash
         run: |
+          set -e
+
           git config --global user.name "OrangeFox Builder"
           git config --global user.email "orangefox-builder@localhost"
 
           git config --global protocol.version 1
           git config --global core.compression 0
-          git config --global http.postBuffer 524288000
 
       # ============================================================
-      # 5. VERIFY DEVICE TREE BRANCH BEFORE STARTING BUILD
+      # 5. CHECK STORAGE
+      # ============================================================
+      - name: Check Storage
+        shell: bash
+        run: |
+          set -e
+
+          echo "===== AVAILABLE STORAGE ====="
+          df -h /
+
+          AVAILABLE_GB=$(df -BG / | awk 'NR==2 {gsub("G","",$4); print $4}')
+
+          echo "Available: ${AVAILABLE_GB} GB"
+
+          if [ "$AVAILABLE_GB" -lt 40 ]; then
+            echo ""
+            echo "======================================================"
+            echo "STOP: GitHub runner does not have enough disk space."
+            echo "OrangeFox 12.1 requires approximately 45 GB."
+            echo "This runner currently has only ${AVAILABLE_GB} GB."
+            echo "======================================================"
+            echo ""
+            exit 1
+          fi
+
+      # ============================================================
+      # 6. VERIFY DEVICE TREE
       # ============================================================
       - name: Verify Zircon Device Tree
+        shell: bash
         run: |
-          echo "Checking device tree..."
+          set -e
+
+          echo "Checking device tree branch..."
 
           git ls-remote \
+            --exit-code \
             --heads \
             "$DEVICE_REPO" \
             "refs/heads/$DEVICE_BRANCH"
 
-          if [ $? -ne 0 ]; then
-            echo "ERROR: Device branch '$DEVICE_BRANCH' was not found."
-            exit 1
-          fi
-
-          echo "Device branch '$DEVICE_BRANCH' exists."
+          echo "Device tree branch '$DEVICE_BRANCH' exists."
 
       # ============================================================
-      # 6. VERIFY ORANGEFOX SYNC SOURCE
+      # 7. CLONE ORANGEFOX SYNC TOOL
       # ============================================================
-      - name: Verify OrangeFox Sync
+      - name: Get OrangeFox Sync Tool
+        shell: bash
         run: |
-          rm -rf "$GITHUB_WORKSPACE/OrangeFox_sync"
+          set -e
+
+          rm -rf "$SYNC_DIR"
 
           git clone \
             --depth=1 \
-            "$ORANGEFOX_SYNC_REPO" \
-            "$GITHUB_WORKSPACE/OrangeFox_sync"
+            https://gitlab.com/OrangeFox/sync.git \
+            "$SYNC_DIR"
 
-          cd "$GITHUB_WORKSPACE/OrangeFox_sync"
+          cd "$SYNC_DIR"
 
           chmod +x orangefox_sync.sh
 
-          echo "=== ORANGEFOX SYNC SCRIPT ==="
+          echo "===== ORANGEFOX SYNC TOOL ====="
           ./orangefox_sync.sh --help
 
       # ============================================================
-      # 7. CHECK DISK BEFORE ORANGEFOX SYNC
+      # 8. SYNC ORANGEFOX 12.1
       # ============================================================
-      - name: Check Build Storage
+      - name: Sync OrangeFox Sources
+        shell: bash
         run: |
-          echo "=== STORAGE STATUS ==="
-          df -h "$GITHUB_WORKSPACE"
+          set -e
 
-          AVAILABLE_GB=$(df -BG "$GITHUB_WORKSPACE" | awk 'NR==2 {gsub("G","",$4); print $4}')
-
-          echo "Available storage: ${AVAILABLE_GB} GB"
-
-          if [ "$AVAILABLE_GB" -lt 12 ]; then
-            echo ""
-            echo "ERROR: Not enough free storage for OrangeFox."
-            echo "Available: ${AVAILABLE_GB} GB"
-            echo "OrangeFox source sync normally needs substantially more storage."
-            echo ""
-            exit 1
-          fi
-
-      # ============================================================
-      # 8. INITIALIZE ORANGEFOX SOURCE
-      # ============================================================
-      - name: Initialize OrangeFox Source
-        run: |
           rm -rf "$FOX_DIR"
           mkdir -p "$FOX_DIR"
 
-          cd "$GITHUB_WORKSPACE/OrangeFox_sync"
+          cd "$SYNC_DIR"
 
           ./orangefox_sync.sh \
-            --branch "$ORANGEFOX_BRANCH" \
+            --branch "$FOX_BRANCH" \
             --path "$FOX_DIR"
 
       # ============================================================
       # 9. ADD ZIRCON DEVICE TREE
       # ============================================================
       - name: Add Zircon Device Tree
+        shell: bash
         run: |
+          set -e
+
           mkdir -p "$FOX_DIR/device/xiaomi"
 
           rm -rf "$FOX_DIR/device/xiaomi/zircon"
@@ -203,126 +227,273 @@ jobs:
             "$DEVICE_REPO" \
             "$FOX_DIR/device/xiaomi/zircon"
 
-          echo "=== DEVICE TREE ==="
+          echo "===== ZIRCON DEVICE TREE ====="
           ls -la "$FOX_DIR/device/xiaomi/zircon"
 
       # ============================================================
-      # 10. VERIFY REQUIRED ZIRCON FILES
+      # 10. VERIFY DEVICE TREE
       # ============================================================
-      - name: Verify Zircon Build Files
+      - name: Verify Zircon Files
+        shell: bash
         run: |
-          cd "$FOX_DIR"
+          set -e
 
-          REQUIRED_FILES=(
-            "device/xiaomi/zircon/AndroidProducts.mk"
-            "device/xiaomi/zircon/BoardConfig.mk"
-            "device/xiaomi/zircon/device.mk"
-            "device/xiaomi/zircon/twrp_zircon.mk"
-            "device/xiaomi/zircon/fox_zircon.mk"
-          )
+          cd "$FOX_DIR/device/xiaomi/zircon"
 
-          for FILE in "${REQUIRED_FILES[@]}"; do
-            if [ ! -f "$FILE" ]; then
-              echo "ERROR: Missing required file:"
-              echo "$FILE"
-              exit 1
-            fi
+          echo "===== DEVICE TREE FILES ====="
 
-            echo "OK: $FILE"
-          done
+          test -f AndroidProducts.mk
+          test -f BoardConfig.mk
+          test -f device.mk
+          test -f twrp_zircon.mk
+          test -f fox_zircon.mk
+
+          echo "All required Zircon files found."
+
+          echo ""
+          echo "===== AndroidProducts.mk ====="
+          cat AndroidProducts.mk
+
+          echo ""
+          echo "===== fox_zircon.mk ====="
+          cat fox_zircon.mk
 
       # ============================================================
-      # 11. SHOW TARGET INFORMATION
+      # 11. PREPARE BUILD ENVIRONMENT
       # ============================================================
-      - name: Show Build Configuration
+      - name: Prepare Build Environment
+        shell: bash
         run: |
-          cd "$FOX_DIR"
+          set -e
 
-          echo "======================================"
-          echo "OrangeFox Zircon Build"
-          echo "======================================"
-
-          echo "Device:"
-          echo "  Xiaomi Redmi Note 13 Pro+"
-          echo "  Codename: zircon"
-
-          echo "Device tree:"
-          echo "  Branch: $DEVICE_BRANCH"
-
-          echo "OrangeFox:"
-          echo "  Manifest: $ORANGEFOX_BRANCH"
-
-          echo "Build target:"
-          echo "  twrp_zircon-eng"
-
-          echo "Image:"
-          echo "  vendor_boot.img"
-
-          echo "======================================"
-
-          grep -n "FOX_RECOVERY_VENDOR_BOOT_PARTITION" \
-            device/xiaomi/zircon/fox_zircon.mk || true
-
-      # ============================================================
-      # 12. BUILD ORANGEFOX
-      # ============================================================
-      - name: Build OrangeFox Vendor Boot
-        run: |
           cd "$FOX_DIR"
 
           export ALLOW_MISSING_DEPENDENCIES=true
 
           source build/envsetup.sh
 
-          lunch twrp_zircon-eng
+          echo "===== BUILD SYSTEM ====="
+          echo "TOP=$ANDROID_BUILD_TOP"
 
-          echo "=== LUNCH TARGET ==="
-          get_build_var TARGET_PRODUCT || true
+          echo ""
+          echo "===== ZIRCON PRODUCTS ====="
 
-          echo "=== STARTING VENDOR BOOT BUILD ==="
+          if command -v list_products >/dev/null 2>&1; then
+            list_products 2>/dev/null | grep -i zircon || true
+          fi
+
+          echo ""
+          echo "===== ZIRCON LUNCH TARGETS ====="
+
+          TARGETS="$(
+            TARGET_BUILD_APPS= \
+            get_build_var COMMON_LUNCH_CHOICES 2>/dev/null \
+            | tr ' ' '\n' \
+            | grep -i zircon \
+            || true
+          )"
+
+          printf '%s\n' "$TARGETS"
+
+          echo "$TARGETS" > /tmp/zircon_lunch_targets
+
+      # ============================================================
+      # 12. AUTOMATICALLY FIND VALID LUNCH TARGET
+      # ============================================================
+      - name: Select Valid Zircon Lunch Target
+        shell: bash
+        run: |
+          set -e
+
+          cd "$FOX_DIR"
+
+          export ALLOW_MISSING_DEPENDENCIES=true
+
+          source build/envsetup.sh
+
+          echo "===== SEARCHING FOR VALID ZIRCON TARGET ====="
+
+          FOUND=""
+
+          # First try targets advertised by the build system.
+          while IFS= read -r TARGET; do
+
+            [ -z "$TARGET" ] && continue
+
+            echo "Testing: $TARGET"
+
+            if lunch "$TARGET" >/tmp/lunch_test.log 2>&1; then
+              FOUND="$TARGET"
+              echo "VALID TARGET: $FOUND"
+              break
+            fi
+
+            cat /tmp/lunch_test.log || true
+
+          done < /tmp/zircon_lunch_targets
+
+          # Fallback candidates for modern Android build systems.
+          if [ -z "$FOUND" ]; then
+
+            CANDIDATES="
+            fox_zircon-ap2a-eng
+            orangefox_zircon-ap2a-eng
+            twrp_zircon-ap2a-eng
+            fox_zircon-ap1a-eng
+            orangefox_zircon-ap1a-eng
+            twrp_zircon-ap1a-eng
+            "
+
+            for TARGET in $CANDIDATES; do
+
+              echo "Testing fallback: $TARGET"
+
+              if lunch "$TARGET" >/tmp/lunch_test.log 2>&1; then
+                FOUND="$TARGET"
+                echo "VALID FALLBACK TARGET: $FOUND"
+                break
+              fi
+
+            done
+
+          fi
+
+          if [ -z "$FOUND" ]; then
+            echo ""
+            echo "======================================================"
+            echo "ERROR: No valid Zircon lunch target was found."
+            echo "======================================================"
+            echo ""
+            echo "AndroidProducts.mk:"
+            cat device/xiaomi/zircon/AndroidProducts.mk
+            echo ""
+            echo "Available products:"
+            list_products 2>/dev/null | grep -i zircon || true
+            echo ""
+            echo "Available lunch choices:"
+            TARGET_BUILD_APPS= get_build_var COMMON_LUNCH_CHOICES 2>/dev/null \
+              | tr ' ' '\n' \
+              | grep -i zircon || true
+            exit 1
+          fi
+
+          echo "$FOUND" > "$GITHUB_WORKSPACE/zircon_lunch_target.txt"
+
+          echo ""
+          echo "SELECTED:"
+          cat "$GITHUB_WORKSPACE/zircon_lunch_target.txt"
+
+      # ============================================================
+      # 13. BUILD VENDOR_BOOT
+      # ============================================================
+      - name: Build OrangeFox Vendor Boot
+        shell: bash
+        run: |
+          set -e
+
+          cd "$FOX_DIR"
+
+          export ALLOW_MISSING_DEPENDENCIES=true
+          export USE_CCACHE=1
+          export CCACHE_EXEC=/usr/bin/ccache
+
+          mkdir -p "$HOME/.ccache"
+          ccache -M 2G || true
+
+          source build/envsetup.sh
+
+          TARGET="$(cat "$GITHUB_WORKSPACE/zircon_lunch_target.txt")"
+
+          echo "===== FINAL LUNCH TARGET ====="
+          echo "$TARGET"
+
+          lunch "$TARGET"
+
+          echo ""
+          echo "===== BUILD VARIABLES ====="
+          echo "TARGET_PRODUCT=$(get_build_var TARGET_PRODUCT)"
+          echo "TARGET_DEVICE=$(get_build_var TARGET_DEVICE)"
+          echo "TARGET_RELEASE=$(get_build_var TARGET_RELEASE)"
+          echo "TARGET_BUILD_VARIANT=$(get_build_var TARGET_BUILD_VARIANT)"
+
+          echo ""
+          echo "===== BUILD VENDOR_BOOT ====="
 
           mka vendorbootimage -j2
 
       # ============================================================
-      # 13. VERIFY RESULT
+      # 14. FIND RESULT
       # ============================================================
-      - name: Verify Build Result
+      - name: Verify Output
+        shell: bash
         run: |
-          IMAGE="$FOX_DIR/out/target/product/zircon/vendor_boot.img"
+          set -e
 
-          if [ ! -f "$IMAGE" ]; then
-            echo "ERROR: vendor_boot.img was not generated."
+          PRODUCT_DIR="$FOX_DIR/out/target/product/zircon"
+
+          echo "===== OUTPUT DIRECTORY ====="
+          ls -lah "$PRODUCT_DIR"
+
+          echo ""
+          echo "===== SEARCHING FOR IMAGES ====="
+
+          find "$PRODUCT_DIR" \
+            -maxdepth 1 \
+            -type f \
+            \( \
+              -name "vendor_boot.img" \
+              -o -name "OrangeFox*.img" \
+              -o -name "recovery.img" \
+            \) \
+            -print
+
+          if [ -f "$PRODUCT_DIR/vendor_boot.img" ]; then
             echo ""
-            echo "Available output:"
-            find "$FOX_DIR/out/target/product/zircon" \
-              -maxdepth 1 \
-              -type f \
-              -printf "%f\n" 2>/dev/null || true
-            exit 1
+            echo "SUCCESS: vendor_boot.img found."
+            ls -lh "$PRODUCT_DIR/vendor_boot.img"
+            exit 0
           fi
 
-          echo "======================================"
-          echo "BUILD SUCCESS"
-          echo "======================================"
+          FOX_IMAGE="$(find "$PRODUCT_DIR" -maxdepth 1 -type f -name 'OrangeFox*.img' | head -n1 || true)"
 
-          ls -lh "$IMAGE"
+          if [ -n "$FOX_IMAGE" ]; then
+            echo ""
+            echo "SUCCESS: OrangeFox image found:"
+            echo "$FOX_IMAGE"
+            exit 0
+          fi
 
-          file "$IMAGE"
+          echo ""
+          echo "ERROR: No OrangeFox/vendor_boot image found."
+          exit 1
 
       # ============================================================
-      # 14. UPLOAD VENDOR_BOOT
+      # 15. UPLOAD RESULT
       # ============================================================
-      - name: Upload OrangeFox Vendor Boot
+      - name: Upload OrangeFox
         uses: actions/upload-artifact@v4
         with:
-          name: OrangeFox-zircon-A15-vendor_boot
-          path: fox/out/target/product/zircon/vendor_boot.img
+          name: OrangeFox-zircon
+          path: |
+            fox/out/target/product/zircon/vendor_boot.img
+            fox/out/target/product/zircon/OrangeFox*.img
           if-no-files-found: error
           retention-days: 7
 
       # ============================================================
-      # 15. UPLOAD BUILD LOGS IF SOMETHING FAILS
+      # 16. UPLOAD LOGS ON FAILURE
       # ============================================================
+      - name: Upload Build Logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: OrangeFox-zircon-failure-logs
+          path: |
+            fox/out/target/product/zircon
+            fox/out
+            /tmp/lunch_test.log
+          if-no-files-found: ignore
+          retention-days: 3=====================================================
       - name: Upload Build Logs
         if: failure()
         uses: actions/upload-artifact@v4
